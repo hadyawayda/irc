@@ -1,0 +1,14 @@
+# Binaries
+ircserv
+*.o
+*.a
+*.so
+*.exe
+*.out
+*.log
+
+# Scripts
+*.sh
+
+# VSCode
+.vscode/
