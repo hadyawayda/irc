@@ -9,13 +9,11 @@
 #include <cstdlib>
 #include <cerrno>
 #include <cstdio>
-
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <fcntl.h>
 #include <unistd.h>
-
 
 Server::Server(const std::string& port, const std::string& password)
 : _listen_fd(-1), _password(password), _servername("ircserv") {
@@ -119,7 +117,6 @@ void Server::handleNewConnection() {
     fcntl(cfd, F_SETFL, O_NONBLOCK);
     _clients[cfd] = new Client(cfd);
     addPollfd(cfd, POLLIN);
-    // Greeting line (optional)
     sendToClient(cfd, ":ircserv NOTICE * :Welcome to ft_irc. Please authenticate: PASS <password>\r\n");
 }
 
@@ -129,7 +126,6 @@ void Server::sendToClient(int fd, const std::string& msg) {
     Client* c = it->second;
     c->outbuf().append(msg);
 
-    // ensure POLLOUT is set
     for (size_t i = 0; i < _pfds.size(); ++i) if (_pfds[i].fd == fd) {
         _pfds[i].events = POLLIN | POLLOUT;
         break;
@@ -168,7 +164,6 @@ void Server::handleClientRead(int fd) {
     Client* c = it->second;
     c->inbuf().append(buf, n);
 
-    // process lines ending with \r\n
     size_t pos;
     CommandHandler dispatcher(*this);
     while ((pos = c->inbuf().find("\r\n")) != std::string::npos) {
@@ -216,7 +211,6 @@ void Server::removeClient(int fd) {
     if (it == _clients.end()) return;
     Client* c = it->second;
 
-    // inform channels about quit
     for (std::set<std::string>::const_iterator sit = c->channels().begin(); sit != c->channels().end(); ++sit) {
         Channel* ch = findChannel(*sit);
         if (ch) {

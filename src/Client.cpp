@@ -27,7 +27,6 @@ void Client::tryRegister(Server& s) {
     if (!_registered && _pass_ok && !_nick.empty() && !_user.empty()) {
         _registered = true;
         s.sendToClient(_fd, ":ircserv 001 " + _nick + " :Welcome to ft_irc " + _nick + "\r\n");
-        s.sendToClient(_fd, ":ircserv 002 " + _nick + " :Your host is ircserv, running version 0.1\r\n");
-        s.sendToClient(_fd, ":ircserv 003 " + _nick + " :This server was created just now\r\n");
+        s.sendToClient(_fd, ":ircserv NOTICE " + _nick + " :You're registered! Try: JOIN #room\r\n");
     }
 }
