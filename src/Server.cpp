@@ -16,12 +16,20 @@
 #include <unistd.h>
 
 Server::Server(const std::string& port, const std::string& password)
-: _listen_fd(-1), _password(password), _servername("ircserv") {
+: _listen_fd(-1), _password(password), _servername("ircserv"),
+  _bot(0), _ft(0) // NEW
+{
     setupSocket(port);
+    // NEW: create subsystems
+    _bot = new Bot(*this, "helperbot");
+    _ft  = new FileTransfer(*this);
 }
 
 Server::~Server() {
     closeAndCleanup();
+    // NEW
+    delete _bot; _bot = 0;
+    delete _ft;  _ft = 0;
 }
 
 const std::string& Server::serverName() const { return _servername; }
@@ -179,8 +187,11 @@ Channel* Server::getOrCreateChannel(const std::string& name) {
     if (it != _channels.end()) return it->second;
     Channel* ch = new Channel(name);
     _channels[key] = ch;
+    // NEW: have the bot “join” (announce + help)
+    if (_bot) _bot->onChannelCreated(name);
     return ch;
 }
+
 
 Channel* Server::findChannel(const std::string& name) {
     std::string key = toLower(name);
@@ -194,6 +205,20 @@ Client* Server::findClientByNick(const std::string& nick) {
         if (toLower(it->second->nick()) == toLower(nick)) return it->second;
     }
     return 0;
+}
+
+void Server::sendServerAs(const std::string& nickFrom, const std::string& commandLine) {
+    // Find the client issuing the command
+    Client* c = findClientByNick(nickFrom);
+    if (!c) return; // silently ignore if not present
+    // Reuse CommandHandler on behalf of this client
+    CommandHandler dispatcher(*this);
+    std::string line = commandLine;
+    // Ensure \r\n termination
+    if (line.size() < 2 || line.substr(line.size()-2) != "\r\n") line += "\r\n";
+    // The command handler expects lines without CRLF
+    line.erase(line.size()-2);
+    dispatcher.handleLine(*c, line);
 }
 
 void Server::broadcast(const std::string& chan, const std::string& msg, int except_fd) {

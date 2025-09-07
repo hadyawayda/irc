@@ -6,7 +6,7 @@
 
 #include <sstream>
 #include <cstdlib>
-#include <unistd.h> // close
+#include <unistd.h>
 
 void CommandHandler::sendNumeric(Client& c, const std::string& code, const std::string& msg) {
     std::string nick = c.nick().empty() ? "*" : c.nick();
@@ -32,6 +32,11 @@ void CommandHandler::handleLine(Client& c, const std::string& line) {
     else if (ucmd == "mode") cmdMODE(c, params);
     else if (ucmd == "invite") cmdINVITE(c, params);
     else if (ucmd == "kick") cmdKICK(c, params, trailing);
+    else if (ucmd == "filesend")   cmdFILESEND(c, params, trailing);
+    else if (ucmd == "fileaccept") cmdFILEACCEPT(c, params);
+    else if (ucmd == "filedata")   cmdFILEDATA(c, params);
+    else if (ucmd == "filedone")   cmdFILEDONE(c, params);
+    else if (ucmd == "filecancel") cmdFILECANCEL(c, params);
     else {
         _srv.sendToClient(c.fd(), ":" + _srv.serverName() + " 421 * " + cmd + " :Unknown command\r\n");
         _srv.sendToClient(c.fd(), ":ircserv NOTICE * :Unknown command. Try: HELP (not implemented) or common IRC commands.\r\n");
@@ -114,6 +119,12 @@ void CommandHandler::cmdPRIVMSG(Client& c, const std::vector<std::string>& p, co
             _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Message sent to " + target + ".\r\n");
         }
     }
+    if (_srv._bot) {
+    // If you supported multi-targets, loop them; otherwise this is fine:
+    std::string target = p[0];
+    std::string text = trailing.empty() ? (p.size() >= 2 ? p[1] : "") : trailing;
+    _srv._bot->onPrivmsg(c, target, text);
+}
 }
 
 void CommandHandler::cmdJOIN(Client& c, const std::vector<std::string>& p) {
@@ -319,6 +330,64 @@ void CommandHandler::cmdKICK(Client& c, const std::vector<std::string>& p, const
     ch->removeMember(victim->fd());
     victim->leaveChannel(toLower(chan));
     _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Kicked " + victimNick + " from " + chan + ".\r\n");
+}
+
+void CommandHandler::cmdFILESEND(Client& c, const std::vector<std::string>& p, const std::string& trailing) {
+    if (!requireRegistered(c, "FILESEND")) return;
+    if (p.size() < 2 || trailing.empty()) { sendNumeric(c, "461", "FILESEND :Not enough parameters"); return; }
+    std::string targetNick = p[0];
+    unsigned long sizeTotal = std::strtoul(p[1].c_str(), 0, 10);
+    Client* dst = _srv.findClientByNick(targetNick);
+    if (!dst) { sendNumeric(c, "401", targetNick + " :No such nick"); return; }
+    int tid = _srv._ft->createOffer(c.fd(), dst->fd(), trailing, sizeTotal);
+    // 739 to sender; 738 to receiver
+    std::ostringstream tidStream;
+    tidStream << tid;
+    std::string tidStr = tidStream.str();
+    _srv.sendToClient(c.fd(),  ":" + _srv.serverName() + " 739 " + c.nick() + " " + targetNick + " " + (tid > 0 ? tidStr : "0") + " " + p[1] + " :" + trailing + "\r\n");
+    std::ostringstream os; os << tid;
+    _srv.sendToClient(dst->fd(), ":" + _srv.serverName() + " 738 " + c.nick() + " " + os.str() + " " + p[1] + " :" + trailing + "\r\n");
+    _srv.sendToClient(dst->fd(), ":ircserv NOTICE " + dst->nick() + " :Use FILEACCEPT " + os.str() + " to receive.\r\n");
+}
+
+void CommandHandler::cmdFILEACCEPT(Client& c, const std::vector<std::string>& p) {
+    if (!requireRegistered(c, "FILEACCEPT")) return;
+    if (p.empty()) { sendNumeric(c, "461", "FILEACCEPT :Not enough parameters"); return; }
+    int tid = std::atoi(p[0].c_str());
+    if (_srv._ft->accept(tid, c.fd())) {
+        _srv.sendToClient(c.fd(),  ":" + _srv.serverName() + " 742 * " + p[0] + " :ACCEPTED\r\n");
+        // Notify sender
+        _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Start receiving with FILEDATA relayed by server.\r\n");
+    } else sendNumeric(c, "400", p[0] + " :Cannot accept");
+}
+
+void CommandHandler::cmdFILEDATA(Client& c, const std::vector<std::string>& p) {
+    if (!requireRegistered(c, "FILEDATA")) return;
+    if (p.size() < 2) { sendNumeric(c, "461", "FILEDATA :Not enough parameters"); return; }
+    int tid = std::atoi(p[0].c_str());
+    std::string err;
+    if (!_srv._ft->pushData(tid, c.fd(), p[1], err)) {
+        sendNumeric(c, "400", p[0] + " :" + err);
+    }
+}
+
+void CommandHandler::cmdFILEDONE(Client& c, const std::vector<std::string>& p) {
+    if (!requireRegistered(c, "FILEDONE")) return;
+    if (p.empty()) { sendNumeric(c, "461", "FILEDONE :Not enough parameters"); return; }
+    int tid = std::atoi(p[0].c_str());
+    std::string err;
+    if (!_srv._ft->done(tid, c.fd(), err)) sendNumeric(c, "400", p[0] + " :" + err);
+}
+
+void CommandHandler::cmdFILECANCEL(Client& c, const std::vector<std::string>& p) {
+    if (!requireRegistered(c, "FILECANCEL")) return;
+    if (p.empty()) { sendNumeric(c, "461", "FILECANCEL :Not enough parameters"); return; }
+    int tid = std::atoi(p[0].c_str());
+    std::string reason;
+    if (_srv._ft->cancel(tid, c.fd(), reason)) {
+        // Inform both peers if we can find them from transfer map (FileTransfer handles validity)
+        _srv.sendToClient(c.fd(), ":" + _srv.serverName() + " 743 * " + p[0] + " :" + reason + "\r\n");
+    } else sendNumeric(c, "400", p[0] + " :Cannot cancel");
 }
 
 bool CommandHandler::requireRegistered(Client& c, const char* forCmd) {

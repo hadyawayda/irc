@@ -10,7 +10,9 @@ SRC := $(SRCDIR)/main.cpp \
        $(SRCDIR)/Client.cpp \
        $(SRCDIR)/Channel.cpp \
        $(SRCDIR)/CommandHandler.cpp \
-       $(SRCDIR)/Utils.cpp
+       $(SRCDIR)/Utils.cpp \
+	   $(SRCDIR)/Bot.cpp \
+       $(SRCDIR)/FileTransfer.cpp
 
 OBJ := $(SRC:.cpp=.o)
 
