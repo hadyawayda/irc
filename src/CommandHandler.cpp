@@ -89,26 +89,36 @@ void CommandHandler::cmdPONG(Client&, const std::vector<std::string>&) {
 }
 
 void CommandHandler::cmdPRIVMSG(Client& c, const std::vector<std::string>& p, const std::string& trailing) {
-    if (p.empty() || (trailing.empty() && (p.size() < 2))) { sendNumeric(c, "411", ":No recipient given (PRIVMSG)"); return; }
-    std::string target = p[0];
-    std::string text = trailing.empty() ? (p.size() >= 2 ? p[1] : "") : trailing;
+    if (!requireRegistered(c, "PRIVMSG")) return;
+    if (p.empty() || (trailing.empty() && p.size() < 2)) { sendNumeric(c, "411", ":No recipient given (PRIVMSG)"); return; }
+    const std::string text = trailing.empty() ? (p.size() >= 2 ? p[1] : "") : trailing;
     if (text.empty()) { sendNumeric(c, "412", ":No text to send"); return; }
 
-    if (isChannelName(target)) {
-        Channel* ch = _srv.findChannel(target);
-        if (!ch || !ch->hasMemberFd(c.fd())) { sendNumeric(c, "404", target + " :Cannot send to channel"); return; }
-        std::string msg = ":" + c.nick() + " PRIVMSG " + target + " :" + text + "\r\n";
-        _srv.broadcast(target, msg, c.fd());
-        _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Message sent to " + target + ".\r\n");
-    } else {
-        Client* dst = _srv.findClientByNick(target);
-        if (!dst) { sendNumeric(c, "401", target + " :No such nick"); return; }
-        _srv.sendToClient(dst->fd(), ":" + c.nick() + " PRIVMSG " + dst->nick() + " :" + text + "\r\n");
-        _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Message sent to " + target + ".\r\n");
+    // split comma-separated targets
+    std::vector<std::string> tgts; { std::string cur; for (size_t i=0;i<p[0].size();++i){ if(p[0][i]==','){ if(!cur.empty()) tgts.push_back(cur); cur.clear(); } else cur+=p[0][i]; } if(!cur.empty()) tgts.push_back(cur); }
+    if (tgts.empty()) { sendNumeric(c, "411", ":No recipient given (PRIVMSG)"); return; }
+
+    for (size_t i = 0; i < tgts.size(); ++i) {
+        const std::string& target = tgts[i];
+        if (isChannelName(target)) {
+            Channel* ch = _srv.findChannel(target);
+            if (!ch) { sendNumeric(c, "403", target + " :No such channel"); continue; }
+            if (!ch->hasMemberFd(c.fd())) { sendNumeric(c, "442", target + " :You're not on that channel"); continue; }
+            std::string msg = ":" + c.nick() + " PRIVMSG " + target + " :" + text + "\r\n";
+            _srv.broadcast(target, msg, c.fd());
+            _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Message sent to " + target + ".\r\n");
+        } else {
+            Client* dst = _srv.findClientByNick(target);
+            if (!dst) { sendNumeric(c, "401", target + " :No such nick"); continue; }
+            _srv.sendToClient(dst->fd(), ":" + c.nick() + " PRIVMSG " + dst->nick() + " :" + text + "\r\n");
+            _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Message sent to " + target + ".\r\n");
+        }
     }
 }
 
 void CommandHandler::cmdJOIN(Client& c, const std::vector<std::string>& p) {
+    if (!requireRegistered(c, "JOIN")) return;
+
     if (p.empty()) { sendNumeric(c, "461", "JOIN :Not enough parameters"); return; }
     std::string chan = p[0];
     std::string key  = (p.size() >= 2 ? p[1] : "");
@@ -150,6 +160,8 @@ void CommandHandler::cmdJOIN(Client& c, const std::vector<std::string>& p) {
 }
 
 void CommandHandler::cmdPART(Client& c, const std::vector<std::string>& p) {
+    if (!requireRegistered(c, "JOIN")) return;
+
     if (p.empty()) { sendNumeric(c, "461", "PART :Not enough parameters"); return; }
     std::string chan = p[0];
     Channel* ch = _srv.findChannel(chan);
@@ -170,6 +182,8 @@ void CommandHandler::cmdQUIT(Client& c, const std::vector<std::string>&, const s
 }
 
 void CommandHandler::cmdTOPIC(Client& c, const std::vector<std::string>& p, const std::string& trailing) {
+    if (!requireRegistered(c, "JOIN")) return;
+
     if (p.empty()) { sendNumeric(c, "461", "TOPIC :Not enough parameters"); return; }
     std::string chan = p[0];
     Channel* ch = _srv.findChannel(chan);
@@ -193,6 +207,8 @@ void CommandHandler::cmdTOPIC(Client& c, const std::vector<std::string>& p, cons
 }
 
 void CommandHandler::cmdMODE(Client& c, const std::vector<std::string>& p) {
+    if (!requireRegistered(c, "JOIN")) return;
+
     if (p.empty()) { sendNumeric(c, "461", "MODE :Not enough parameters"); return; }
     std::string chan = p[0];
     Channel* ch = _srv.findChannel(chan);
@@ -263,6 +279,8 @@ void CommandHandler::cmdMODE(Client& c, const std::vector<std::string>& p) {
 }
 
 void CommandHandler::cmdINVITE(Client& c, const std::vector<std::string>& p) {
+    if (!requireRegistered(c, "JOIN")) return;
+
     if (p.size() < 2) { sendNumeric(c, "461", "INVITE :Not enough parameters"); return; }
     std::string nick = p[0];
     std::string chan = p[1];
@@ -280,6 +298,8 @@ void CommandHandler::cmdINVITE(Client& c, const std::vector<std::string>& p) {
 }
 
 void CommandHandler::cmdKICK(Client& c, const std::vector<std::string>& p, const std::string& trailing) {
+    if (!requireRegistered(c, "JOIN")) return;
+    
     if (p.size() < 2) { sendNumeric(c, "461", "KICK :Not enough parameters"); return; }
     std::string chan = p[0];
     std::string victimNick = p[1];
@@ -299,4 +319,12 @@ void CommandHandler::cmdKICK(Client& c, const std::vector<std::string>& p, const
     ch->removeMember(victim->fd());
     victim->leaveChannel(toLower(chan));
     _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Kicked " + victimNick + " from " + chan + ".\r\n");
+}
+
+bool CommandHandler::requireRegistered(Client& c, const char* forCmd) {
+    if (c.isRegistered()) return true;
+    // 451 ERR_NOTREGISTERED — include the command name if we have it
+    std::string what = forCmd ? std::string(forCmd) : std::string("*");
+    sendNumeric(c, "451", what + " :You have not registered");
+    return false;
 }

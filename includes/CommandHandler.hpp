@@ -29,6 +29,8 @@ private:
     void cmdKICK(Client&, const std::vector<std::string>&, const std::string& trailing);
 
     void sendNumeric(Client&, const std::string& code, const std::string& msg);
+    
+    bool requireRegistered(Client& c, const char* forCmd);
 };
 
 #endif
