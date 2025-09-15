@@ -5,27 +5,31 @@ NAME     := ircserv
 INCDIR   := includes
 SRCDIR   := src
 
-SRC := $(SRCDIR)/main.cpp \
-       $(SRCDIR)/Server.cpp \
-       $(SRCDIR)/Client.cpp \
-       $(SRCDIR)/Channel.cpp \
-       $(SRCDIR)/CommandHandler.cpp \
-       $(SRCDIR)/Utils.cpp \
-	   $(SRCDIR)/Bot.cpp \
-       $(SRCDIR)/FileTransfer.cpp
+SRC := main.cpp \
+       Server.cpp \
+       Client.cpp \
+       Channel.cpp \
+       CommandHandler.cpp \
+       Utils.cpp \
+       Bot.cpp \
+       FileTransfer.cpp
 
-OBJ := $(SRC:.cpp=.o)
+OBJDIR := obj
+OBJ := $(SRC:%.cpp=$(OBJDIR)/%.o)
+SRC := $(SRC:%.cpp=$(SRCDIR)/%.cpp)
 
 all: $(NAME)
 
 $(NAME): $(OBJ)
 	@$(CXX) $(CXXFLAGS) -I$(INCDIR) $(OBJ) -o $(NAME)
 
-$(SRCDIR)/%.o: $(SRCDIR)/%.cpp
+$(OBJDIR)/%.o: $(SRCDIR)/%.cpp
+	@mkdir -p $(OBJDIR)
 	@$(CXX) $(CXXFLAGS) -I$(INCDIR) -c $< -o $@
 
 clean:
 	@rm -f $(OBJ)
+	@rm -rf $(OBJDIR)
 
 fclean: clean
 	@rm -f $(NAME)
