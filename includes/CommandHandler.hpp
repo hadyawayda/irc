@@ -27,8 +27,16 @@ private:
     void cmdMODE(Client&, const std::vector<std::string>&);
     void cmdINVITE(Client&, const std::vector<std::string>&);
     void cmdKICK(Client&, const std::vector<std::string>&, const std::string& trailing);
+    void cmdFILESEND(Client&, const std::vector<std::string>&, const std::string& trailing);
+    void cmdFILEACCEPT(Client&, const std::vector<std::string>&);
+    void cmdFILEDATA(Client&, const std::vector<std::string>&);
+    void cmdFILEDONE(Client&, const std::vector<std::string>&);
+    void cmdFILECANCEL(Client&, const std::vector<std::string>&);
+
 
     void sendNumeric(Client&, const std::string& code, const std::string& msg);
+    
+    bool requireRegistered(Client& c, const char* forCmd);
 };
 
 #endif

@@ -9,21 +9,27 @@
 #include <cstdlib>
 #include <cerrno>
 #include <cstdio>
-
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
 #include <fcntl.h>
 #include <unistd.h>
 
-
 Server::Server(const std::string& port, const std::string& password)
-: _listen_fd(-1), _password(password), _servername("ircserv") {
+: _listen_fd(-1), _password(password), _servername("ircserv"),
+  _bot(0), _ft(0) // NEW
+{
     setupSocket(port);
+    // NEW: create subsystems
+    _bot = new Bot(*this, "helperbot");
+    _ft  = new FileTransfer(*this);
 }
 
 Server::~Server() {
     closeAndCleanup();
+    // NEW
+    delete _bot; _bot = 0;
+    delete _ft;  _ft = 0;
 }
 
 const std::string& Server::serverName() const { return _servername; }
@@ -119,7 +125,6 @@ void Server::handleNewConnection() {
     fcntl(cfd, F_SETFL, O_NONBLOCK);
     _clients[cfd] = new Client(cfd);
     addPollfd(cfd, POLLIN);
-    // Greeting line (optional)
     sendToClient(cfd, ":ircserv NOTICE * :Welcome to ft_irc. Please authenticate: PASS <password>\r\n");
 }
 
@@ -129,7 +134,6 @@ void Server::sendToClient(int fd, const std::string& msg) {
     Client* c = it->second;
     c->outbuf().append(msg);
 
-    // ensure POLLOUT is set
     for (size_t i = 0; i < _pfds.size(); ++i) if (_pfds[i].fd == fd) {
         _pfds[i].events = POLLIN | POLLOUT;
         break;
@@ -168,7 +172,6 @@ void Server::handleClientRead(int fd) {
     Client* c = it->second;
     c->inbuf().append(buf, n);
 
-    // process lines ending with \r\n
     size_t pos;
     CommandHandler dispatcher(*this);
     while ((pos = c->inbuf().find("\r\n")) != std::string::npos) {
@@ -184,8 +187,11 @@ Channel* Server::getOrCreateChannel(const std::string& name) {
     if (it != _channels.end()) return it->second;
     Channel* ch = new Channel(name);
     _channels[key] = ch;
+    // NEW: have the bot “join” (announce + help)
+    if (_bot) _bot->onChannelCreated(name);
     return ch;
 }
+
 
 Channel* Server::findChannel(const std::string& name) {
     std::string key = toLower(name);
@@ -199,6 +205,20 @@ Client* Server::findClientByNick(const std::string& nick) {
         if (toLower(it->second->nick()) == toLower(nick)) return it->second;
     }
     return 0;
+}
+
+void Server::sendServerAs(const std::string& nickFrom, const std::string& commandLine) {
+    // Find the client issuing the command
+    Client* c = findClientByNick(nickFrom);
+    if (!c) return; // silently ignore if not present
+    // Reuse CommandHandler on behalf of this client
+    CommandHandler dispatcher(*this);
+    std::string line = commandLine;
+    // Ensure \r\n termination
+    if (line.size() < 2 || line.substr(line.size()-2) != "\r\n") line += "\r\n";
+    // The command handler expects lines without CRLF
+    line.erase(line.size()-2);
+    dispatcher.handleLine(*c, line);
 }
 
 void Server::broadcast(const std::string& chan, const std::string& msg, int except_fd) {
@@ -216,7 +236,6 @@ void Server::removeClient(int fd) {
     if (it == _clients.end()) return;
     Client* c = it->second;
 
-    // inform channels about quit
     for (std::set<std::string>::const_iterator sit = c->channels().begin(); sit != c->channels().end(); ++sit) {
         Channel* ch = findChannel(*sit);
         if (ch) {
