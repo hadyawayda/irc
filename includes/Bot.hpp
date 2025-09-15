@@ -28,7 +28,6 @@ class Bot
 	static std::string toLower(const std::string &s);
 	bool isChannel(const std::string &s) const;
 	void say(const std::string &where, const std::string &text);
-		// sends PRIVMSG as the bot
 };
 
 #endif

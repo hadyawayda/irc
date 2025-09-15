@@ -33,7 +33,6 @@ private:
     void cmdFILEDONE(Client&, const std::vector<std::string>&);
     void cmdFILECANCEL(Client&, const std::vector<std::string>&);
 
-
     void sendNumeric(Client&, const std::string& code, const std::string& msg);
     
     bool requireRegistered(Client& c, const char* forCmd);
