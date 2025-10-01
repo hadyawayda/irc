@@ -5,22 +5,12 @@
 #include <set>
 
 class Channel {
-    std::string _name;
-    std::string _topic;
-    std::set<int> _members;                 // client fds
-    std::set<std::string> _operators;       // nicks
-    std::set<std::string> _invited;         // nicks
-    bool _inviteOnly;
-    bool _topicRestricted;
-    std::string _key;
-    int _userLimit; // -1 = none
-
 public:
     Channel(const std::string& name);
 
     const std::string& name() const;
     const std::string& topic() const;
-    void setTopic(const std::string& t);
+    void               setTopic(const std::string& t);
 
     bool hasMemberFd(int fd) const;
     void addMember(int fd);
@@ -45,9 +35,26 @@ public:
     void setKey(const std::string& k);
     void clearKey();
 
-    int userLimit() const;
+    int  userLimit() const;
     void setUserLimit(int lim);
     bool isFull() const;
+
+    // NEW helpers
+    bool empty() const { return _members.empty(); }
+    bool hasAnyOp() const { return !_operators.empty(); }
+
+private:
+    std::string _name;
+    std::string _topic;
+
+    std::set<int>          _members;
+    std::set<std::string>  _operators;
+    std::set<std::string>  _invited;
+
+    bool        _inviteOnly;
+    bool        _topicRestricted;
+    std::string _key;
+    int         _userLimit;
 };
 
-#endif
+#endif // CHANNEL_HPP

@@ -8,7 +8,7 @@ ircserv
 *.log
 
 # Scripts
-*.sh
+# *.sh
 
 # VSCode
 .vscode/

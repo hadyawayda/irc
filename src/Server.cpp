@@ -3,6 +3,8 @@
 #include "Channel.hpp"
 #include "CommandHandler.hpp"
 #include "Utils.hpp"
+#include "Bot.hpp"
+#include "FileTransfer.hpp"
 
 #include <iostream>
 #include <cstring>
@@ -14,20 +16,24 @@
 #include <netdb.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <poll.h>  // ensure pollfd / poll
 
 Server::Server(const std::string& port, const std::string& password)
-: _listen_fd(-1), _password(password), _servername("ircserv"),
-  _bot(0), _ft(0) // NEW
+: _bot(0), _ft(0)
 {
+    _listen_fd = -1;
+    _password = password;
+    _servername = "ircserv";
+
     setupSocket(port);
-    // NEW: create subsystems
+
+    // subsystems
     _bot = new Bot(*this, "helperbot");
     _ft  = new FileTransfer(*this);
 }
 
 Server::~Server() {
     closeAndCleanup();
-    // NEW
     delete _bot; _bot = 0;
     delete _ft;  _ft = 0;
 }
@@ -35,7 +41,14 @@ Server::~Server() {
 const std::string& Server::serverName() const { return _servername; }
 
 void Server::setupSocket(const std::string& port) {
-    struct addrinfo hints; std::memset(&hints, 0, sizeof(hints));
+    struct addrinfo hints;
+
+    // zero w/o memset (42 style)
+    {
+        unsigned char* p = reinterpret_cast<unsigned char*>(&hints);
+        for (size_t i = 0; i < sizeof(hints); ++i) p[i] = 0;
+    }
+
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
@@ -43,7 +56,7 @@ void Server::setupSocket(const std::string& port) {
     struct addrinfo* res = 0;
     int err = getaddrinfo(NULL, port.c_str(), &hints, &res);
     if (err != 0) {
-        std::cerr << "getaddrinfo: " << gai_strerror(err) << std::endl;
+        std::cerr << "getaddrinfo failed\n";
         std::exit(1);
     }
 
@@ -66,13 +79,11 @@ void Server::setupSocket(const std::string& port) {
     freeaddrinfo(res);
 
     if (_listen_fd < 0) {
-        std::cerr << "Failed to bind/listen" << std::endl;
+        std::cerr << "Failed to bind/listen\n";
         std::exit(1);
     }
 
-    // set non-blocking
     fcntl(_listen_fd, F_SETFL, O_NONBLOCK);
-
     addPollfd(_listen_fd, POLLIN);
 }
 
@@ -93,8 +104,9 @@ void Server::run() {
     while (true) {
         int ret = poll(&_pfds[0], _pfds.size(), -1);
         if (ret < 0) {
-            if (errno == EINTR) continue;
-            std::perror("poll"); break;
+            // keep it simple; don't drive logic via errno
+            std::cerr << "poll failed\n";
+            break;
         }
         for (size_t i = 0; i < _pfds.size(); ++i) {
             int fd = _pfds[i].fd;
@@ -187,11 +199,9 @@ Channel* Server::getOrCreateChannel(const std::string& name) {
     if (it != _channels.end()) return it->second;
     Channel* ch = new Channel(name);
     _channels[key] = ch;
-    // NEW: have the bot “join” (announce + help)
     if (_bot) _bot->onChannelCreated(name);
     return ch;
 }
-
 
 Channel* Server::findChannel(const std::string& name) {
     std::string key = toLower(name);
@@ -208,15 +218,11 @@ Client* Server::findClientByNick(const std::string& nick) {
 }
 
 void Server::sendServerAs(const std::string& nickFrom, const std::string& commandLine) {
-    // Find the client issuing the command
     Client* c = findClientByNick(nickFrom);
-    if (!c) return; // silently ignore if not present
-    // Reuse CommandHandler on behalf of this client
+    if (!c) return;
     CommandHandler dispatcher(*this);
     std::string line = commandLine;
-    // Ensure \r\n termination
     if (line.size() < 2 || line.substr(line.size()-2) != "\r\n") line += "\r\n";
-    // The command handler expects lines without CRLF
     line.erase(line.size()-2);
     dispatcher.handleLine(*c, line);
 }
@@ -240,7 +246,10 @@ void Server::removeClient(int fd) {
         Channel* ch = findChannel(*sit);
         if (ch) {
             ch->removeMember(fd);
+            ch->removeOp(c->nick()); // drop op on disconnect
             broadcast(*sit, ":" + c->nick() + " QUIT :Client disconnected\r\n", fd);
+            promoteOpIfNone(*ch);
+            maybeDeleteChannel(*sit);
         }
     }
 
@@ -262,4 +271,24 @@ void Server::closeAndCleanup() {
         delete ct->second;
     }
     _channels.clear();
+}
+
+void Server::maybeDeleteChannel(const std::string& name) {
+    Channel* ch = findChannel(name);
+    if (ch && ch->empty()) {
+        std::string key = toLower(name);
+        std::map<std::string,Channel*>::iterator it = _channels.find(key);
+        if (it != _channels.end()) { delete it->second; _channels.erase(it); }
+    }
+}
+
+void Server::promoteOpIfNone(Channel& ch) {
+    if (ch.hasAnyOp()) return;
+    const std::set<int>& mem = ch.members();
+    if (mem.empty()) return;
+    int fd = *mem.begin();
+    Client* who = _clients.count(fd) ? _clients[fd] : 0;
+    if (!who) return;
+    ch.addOp(who->nick());
+    broadcast(ch.name(), ":" + serverName() + " MODE " + ch.name() + " +o " + who->nick() + "\r\n", -1);
 }

@@ -18,7 +18,12 @@ void Channel::removeOp(const std::string& nick) { _operators.erase(nick); }
 
 void Channel::invite(const std::string& nick) { _invited.insert(nick); }
 bool Channel::isInvited(const std::string& nick) const { return _invited.find(nick) != _invited.end(); }
-bool Channel::consumeInvite(const std::string& nick) { std::set<std::string>::iterator it = _invited.find(nick); if (it == _invited.end()) return false; _invited.erase(it); return true; }
+bool Channel::consumeInvite(const std::string& nick) {
+    std::set<std::string>::iterator it = _invited.find(nick);
+    if (it == _invited.end()) return false;
+    _invited.erase(it);
+    return true;
+}
 
 bool Channel::inviteOnly() const { return _inviteOnly; }
 void Channel::setInviteOnly(bool b) { _inviteOnly = b; }
