@@ -6,13 +6,13 @@ INCDIR   := includes
 SRCDIR   := src
 
 SRC      := main.cpp \
-            Server.cpp \
-            Client.cpp \
-            Channel.cpp \
-            CommandHandler.cpp \
-            Utils.cpp \
-            Bot.cpp \
-            FileTransfer.cpp
+			Server.cpp \
+			Client.cpp \
+			Channel.cpp \
+			CommandHandler.cpp \
+			Utils.cpp \
+			Bot.cpp \
+			FileTransfer.cpp
 
 OBJDIR := obj
 OBJ := $(SRC:%.cpp=$(OBJDIR)/%.o)

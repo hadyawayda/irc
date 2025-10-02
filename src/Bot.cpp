@@ -77,6 +77,7 @@ void Bot::onPrivmsg(const Client& from, const std::string& target, const std::st
 // ----- commands -----
 
 void Bot::doHelp(const std::string& where, const std::string& who, const std::string& arg) {
+    (void)who; // silence -Werror,-Wunused-parameter
     if (arg.empty()) {
         say(where, "!help [cmd] | !about | !ping | !echo <text> | !who | !modes | !roll [XdY] | !8ball <q> | !topic <text> | !op <nick> | !deop <nick> | !kick <nick> [reason]");
         return;
