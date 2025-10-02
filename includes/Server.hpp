@@ -27,20 +27,20 @@ public:
 
     void sendServerAs(const std::string& nickFrom, const std::string& commandLine);
 
-    // NEW: channel maintenance
+    // NEW
     void ensureOpIfNone(Channel* ch);
     void maybeDeleteChannelIfEmpty(Channel* ch);
 
     void run();
 
-    // Exposed to handlers/bot
+    // public state used by other components
     std::map<int, Client*>             _clients;
     std::map<std::string, Channel*>    _channels;
     std::string                        _password;
     std::string                        _servername;
 
-    Bot*          _bot;
-    FileTransfer* _ft;
+    Bot*           _bot;
+    FileTransfer*  _ft;
 
 private:
     int _listen_fd;

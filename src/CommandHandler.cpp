@@ -3,10 +3,8 @@
 #include "Client.hpp"
 #include "Channel.hpp"
 #include "Utils.hpp"
-
-// Needed to call _srv._bot and _srv._ft members
-#include "Bot.hpp"
-#include "FileTransfer.hpp"
+#include "Bot.hpp"           // <-- needed for _srv._bot->onPrivmsg
+#include "FileTransfer.hpp"  // <-- needed for _srv._ft->*
 
 #include <sstream>
 #include <cstdlib>
@@ -26,12 +24,12 @@ void CommandHandler::handleLine(Client& c, const std::string& line) {
     if (ucmd == "pass") cmdPASS(c, params);
     else if (ucmd == "nick") cmdNICK(c, params);
     else if (ucmd == "user") cmdUSER(c, params, trailing);
-    else if (ucmd == "ping") cmdPING(c, params);         // keep: clients rely on this
-    else if (ucmd == "pong") cmdPONG(c, params);         // harmless
+    else if (ucmd == "ping") cmdPING(c, params);
+    else if (ucmd == "pong") cmdPONG(c, params);
     else if (ucmd == "privmsg") cmdPRIVMSG(c, params, trailing);
     else if (ucmd == "join") cmdJOIN(c, params);
-    else if (ucmd == "part") cmdPART(c, params);         // keep: needed to leave channels
-    else if (ucmd == "quit") cmdQUIT(c, params, trailing); // keep: clients use it
+    else if (ucmd == "part") cmdPART(c, params);
+    else if (ucmd == "quit") cmdQUIT(c, params, trailing);
     else if (ucmd == "topic") cmdTOPIC(c, params, trailing);
     else if (ucmd == "mode") cmdMODE(c, params);
     else if (ucmd == "invite") cmdINVITE(c, params);
@@ -70,8 +68,9 @@ void CommandHandler::cmdNICK(Client& c, const std::vector<std::string>& p) {
     std::string old = c.nick();
     c.setNick(newnick);
     if (!old.empty()) {
-        for (std::set<std::string>::const_iterator sit = c.channels().begin(); sit != c.channels().end(); ++sit)
+        for (std::set<std::string>::const_iterator sit = c.channels().begin(); sit != c.channels().end(); ++sit) {
             _srv.broadcast(*sit, ":" + old + " NICK :" + newnick + "\r\n", c.fd());
+        }
     }
     _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Your nickname is now '" + c.nick() + "'.\r\n");
     c.tryRegister(_srv);
@@ -89,9 +88,10 @@ void CommandHandler::cmdUSER(Client& c, const std::vector<std::string>& p, const
 void CommandHandler::cmdPING(Client& c, const std::vector<std::string>& p) {
     if (p.empty()) { sendNumeric(c, "409", ":No origin specified"); return; }
     _srv.sendToClient(c.fd(), ":" + _srv.serverName() + " PONG " + _srv.serverName() + " :" + p[0] + "\r\n");
+    _srv.sendToClient(c.fd(), ":ircserv NOTICE " + (c.nick().empty() ? std::string("*") : c.nick()) + " :PONG sent.\r\n");
 }
 
-void CommandHandler::cmdPONG(Client&, const std::vector<std::string>&) {}
+void CommandHandler::cmdPONG(Client&, const std::vector<std::string>&) { /* ignore */ }
 
 void CommandHandler::cmdPRIVMSG(Client& c, const std::vector<std::string>& p, const std::string& trailing) {
     if (!requireRegistered(c, "PRIVMSG")) return;
@@ -110,16 +110,18 @@ void CommandHandler::cmdPRIVMSG(Client& c, const std::vector<std::string>& p, co
             if (!ch->hasMemberFd(c.fd())) { sendNumeric(c, "442", target + " :You're not on that channel"); continue; }
             std::string msg = ":" + c.nick() + " PRIVMSG " + target + " :" + text + "\r\n";
             _srv.broadcast(target, msg, c.fd());
+            _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Message sent to " + target + ".\r\n");
         } else {
             Client* dst = _srv.findClientByNick(target);
             if (!dst) { sendNumeric(c, "401", target + " :No such nick"); continue; }
             _srv.sendToClient(dst->fd(), ":" + c.nick() + " PRIVMSG " + dst->nick() + " :" + text + "\r\n");
+            _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Message sent to " + target + ".\r\n");
         }
     }
     if (_srv._bot) {
-        std::string target = p[0];
+        std::string target2 = p[0];
         std::string text2 = trailing.empty() ? (p.size() >= 2 ? p[1] : "") : trailing;
-        _srv._bot->onPrivmsg(c, target, text2);
+        _srv._bot->onPrivmsg(c, target2, text2);
     }
 }
 
@@ -162,9 +164,7 @@ void CommandHandler::cmdJOIN(Client& c, const std::vector<std::string>& p) {
         _srv.sendToClient(c.fd(), ":" + _srv.serverName() + " 353 " + c.nick() + " = " + chan + " :" + names + "\r\n");
         _srv.sendToClient(c.fd(), ":" + _srv.serverName() + " 366 " + c.nick() + " " + chan + " :End of /NAMES list.\r\n");
 
-        // Make bot greet AFTER the first user joined, so it’s visible
-        if (_srv._bot && ch->members().size() == 1)
-            _srv._bot->onChannelCreated(chan);
+        _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Joined " + chan + ". Type: PRIVMSG " + chan + " :hello\r\n");
     }
 }
 
@@ -178,7 +178,6 @@ void CommandHandler::cmdPART(Client& c, const std::vector<std::string>& p) {
 
     ch->removeMember(c.fd());
     c.leaveChannel(toLower(chan));
-
     ch->removeOp(c.nick());
     _srv.ensureOpIfNone(ch);
 
@@ -238,20 +237,19 @@ void CommandHandler::cmdMODE(Client& c, const std::vector<std::string>& p) {
     if (!ch) { sendNumeric(c, "403", chan + " :No such channel"); return; }
     if (!ch->hasMemberFd(c.fd())) { sendNumeric(c, "442", chan + " :You're not on that channel"); return; }
 
-    // Query current modes
+    // helper to build current modes+args
+    std::string modes = "+";
+    std::string args;
+    if (ch->inviteOnly()) modes += "i";
+    if (ch->topicRestricted()) modes += "t";
+    if (!ch->key().empty()) { modes += "k"; if (!args.empty()) args += " "; args += ch->key(); }
+    if (ch->userLimit() != -1) { modes += "l"; if (!args.empty()) args += " "; std::ostringstream os; os << ch->userLimit(); args += os.str(); }
+
     if (p.size() == 1) {
-        std::string modes = "+";
-        std::string args;
-        if (ch->inviteOnly()) modes += "i";
-        if (ch->topicRestricted()) modes += "t";
-        if (!ch->key().empty()) { modes += "k"; if (!args.empty()) args += " "; args += ch->key(); }
-        if (ch->userLimit() != -1) { modes += "l"; if (!args.empty()) args += " "; std::ostringstream os; os << ch->userLimit(); args += os.str(); }
         _srv.sendToClient(c.fd(), ":" + _srv.serverName() + " 324 " + c.nick() + " " + chan + " " + modes + (args.empty() ? "" : (" " + args)) + "\r\n");
         _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Modes on " + chan + " are " + modes + (args.empty() ? "" : (" " + args)) + " (i=invite-only, t=topic-ops-only, k=key, l=limit).\r\n");
         return;
     }
-
-    // Changing modes: must be op
     if (!ch->isOp(c.nick())) { sendNumeric(c, "482", chan + " :You're not channel operator"); return; }
 
     std::string flags = p[1];
@@ -266,7 +264,7 @@ void CommandHandler::cmdMODE(Client& c, const std::vector<std::string>& p) {
         char f = flags[i];
         if (f == '+') { adding = true; continue; }
         if (f == '-') { adding = false; continue; }
-        if (lastSign != (adding ? '+' : '-')) { outModes.push_back(adding ? '+' : '-'); lastSign = (adding ? '+' : '-'); }
+        if (lastSign != (adding ? '+' : '-')) { outModes.push_back(adding?'+':'-'); lastSign = adding?'+':'-'; }
 
         if (f == 'i') { ch->setInviteOnly(adding); outModes.push_back('i'); }
         else if (f == 't') { ch->setTopicRestricted(adding); outModes.push_back('t'); }
@@ -283,39 +281,33 @@ void CommandHandler::cmdMODE(Client& c, const std::vector<std::string>& p) {
         } else if (f == 'l') {
             if (adding) {
                 if (argi >= p.size()) { sendNumeric(c, "461", "MODE :Not enough parameters"); return; }
-                int lim = std::atoi(p[argi].c_str());
-                if (lim < 0) lim = 0;
-                int cur = (int)ch->memberCount();
+                int lim = std::atoi(p[argi].c_str()); if (lim < 0) lim = 0;
+                int cur = static_cast<int>(ch->memberCount());
                 if (lim > 0 && lim < cur) {
                     sendNumeric(c, "471", chan + " :Cannot set limit below current members");
-                    // skip applying this 'l'
                 } else {
-                    ch->setUserLimit(lim);
-                    outModes.push_back('l'); outArgs.push_back(p[argi]);
+                    ch->setUserLimit(lim); outModes.push_back('l'); outArgs.push_back(p[argi]);
                 }
                 ++argi;
-            } else {
-                ch->setUserLimit(-1);
-                outModes.push_back('l'); // -l has no arg
-            }
+            } else { ch->setUserLimit(-1); outModes.push_back('l'); }
         }
     }
 
-    if (outModes.size() > 1) {
+    if (!outModes.empty()) {
         std::string applied = ":" + c.nick() + " MODE " + chan + " " + outModes;
         for (size_t k = 0; k < outArgs.size(); ++k) applied += " " + outArgs[k];
         applied += "\r\n";
         _srv.broadcast(chan, applied, -1);
     }
 
-    std::string snapshot = "+";
-    std::string sargs;
-    if (ch->inviteOnly()) snapshot += "i";
-    if (ch->topicRestricted()) snapshot += "t";
-    if (!ch->key().empty()) { snapshot += "k"; if (!sargs.empty()) sargs += " "; sargs += ch->key(); }
-    if (ch->userLimit() != -1) { snapshot += "l"; if (!sargs.empty()) sargs += " "; std::ostringstream os; os << ch->userLimit(); sargs += os.str(); }
-    _srv.sendToClient(c.fd(), ":" + _srv.serverName() + " 324 " + c.nick() + " " + chan + " " + snapshot + (sargs.empty() ? "" : (" " + sargs)) + "\r\n");
-    _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Set modes on " + chan + " to " + snapshot + (sargs.empty() ? "" : (" " + sargs)) + " (i=invite-only, t=topic-ops-only, k=key, l=limit).\r\n");
+    // snapshot back to the setter
+    modes = "+"; args.clear();
+    if (ch->inviteOnly()) modes += "i";
+    if (ch->topicRestricted()) modes += "t";
+    if (!ch->key().empty()) { modes += "k"; if (!args.empty()) args += " "; args += ch->key(); }
+    if (ch->userLimit() != -1) { modes += "l"; if (!args.empty()) args += " "; std::ostringstream os; os << ch->userLimit(); args += os.str(); }
+    _srv.sendToClient(c.fd(), ":" + _srv.serverName() + " 324 " + c.nick() + " " + chan + " " + modes + (args.empty() ? "" : (" " + args)) + "\r\n");
+    _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Set modes on " + chan + " to " + modes + (args.empty() ? "" : (" " + args)) + " (i=invite-only, t=topic-ops-only, k=key, l=limit).\r\n");
 
     _srv.ensureOpIfNone(ch);
 }
@@ -367,7 +359,6 @@ void CommandHandler::cmdKICK(Client& c, const std::vector<std::string>& p, const
     _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :Kicked " + victimNick + " from " + chan + ".\r\n");
 }
 
-// File transfer commands unchanged (your custom bonus)
 void CommandHandler::cmdFILESEND(Client& c, const std::vector<std::string>& p, const std::string& trailing) {
     if (!requireRegistered(c, "FILESEND")) return;
     if (p.size() < 2 || trailing.empty()) { sendNumeric(c, "461", "FILESEND :Not enough parameters"); return; }
@@ -399,7 +390,9 @@ void CommandHandler::cmdFILEDATA(Client& c, const std::vector<std::string>& p) {
     if (p.size() < 2) { sendNumeric(c, "461", "FILEDATA :Not enough parameters"); return; }
     int tid = std::atoi(p[0].c_str());
     std::string err;
-    if (!_srv._ft->pushData(tid, c.fd(), p[1], err)) sendNumeric(c, "400", p[0] + " :" + err);
+    if (!_srv._ft->pushData(tid, c.fd(), p[1], err)) {
+        sendNumeric(c, "400", p[0] + " :" + err);
+    }
 }
 
 void CommandHandler::cmdFILEDONE(Client& c, const std::vector<std::string>& p) {
@@ -415,9 +408,9 @@ void CommandHandler::cmdFILECANCEL(Client& c, const std::vector<std::string>& p)
     if (p.empty()) { sendNumeric(c, "461", "FILECANCEL :Not enough parameters"); return; }
     int tid = std::atoi(p[0].c_str());
     std::string reason;
-    if (_srv._ft->cancel(tid, c.fd(), reason))
+    if (_srv._ft->cancel(tid, c.fd(), reason)) {
         _srv.sendToClient(c.fd(), ":" + _srv.serverName() + " 743 * " + p[0] + " :" + reason + "\r\n");
-    else sendNumeric(c, "400", p[0] + " :Cannot cancel");
+    } else sendNumeric(c, "400", p[0] + " :Cannot cancel");
 }
 
 bool CommandHandler::requireRegistered(Client& c, const char* forCmd) {

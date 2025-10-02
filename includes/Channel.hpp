@@ -17,18 +17,15 @@ public:
     void removeMember(int fd);
     const std::set<int>& members() const;
 
-    // Operators
     bool isOp(const std::string& nick) const;
     void addOp(const std::string& nick);
     void removeOp(const std::string& nick);
-    bool hasAnyOp() const;            // NEW
+    bool hasAnyOp() const;
 
-    // Invites
     void invite(const std::string& nick);
     bool isInvited(const std::string& nick) const;
     bool consumeInvite(const std::string& nick);
 
-    // Modes
     bool inviteOnly() const;
     void setInviteOnly(bool b);
 
@@ -43,19 +40,15 @@ public:
     void setUserLimit(int lim);
     bool isFull() const;
 
-    // Convenience
-    bool   empty() const;             // NEW
-    size_t memberCount() const;       // NEW
+    bool   empty() const;
+    size_t memberCount() const;
 
 private:
     std::string _name;
     std::string _topic;
-
     std::set<int>         _members;
     std::set<std::string> _operators;
-
     std::set<std::string> _invited;
-
     bool        _inviteOnly;
     bool        _topicRestricted;
     std::string _key;
