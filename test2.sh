@@ -46,7 +46,7 @@ cleanup() {
   for fd in ${A_WFD:-} ${B_WFD:-} ${C_WFD:-}; do [[ -n "${fd:-}" ]] && exec {fd}>&- 2>/dev/null || true; done
   # close read fds
   for fd in ${A_RFD:-} ${B_RFD:-} ${C_RFD:-}; do [[ -n "${fd:-}" ]] && exec {fd}<&- 2>/dev/null || true; done
-  # kill coprocess PIDs
+  # kill coprocess PIDs (if any)
   for p in ${APROC_PID:-} ${BPROC_PID:-} ${CPROC_PID:-}; do [[ -n "${p:-}" ]] && kill "$p" 2>/dev/null || true; done
   # kill server last
   if [[ -n "${SERVER_PID:-}" ]]; then
@@ -148,17 +148,29 @@ section_end() {
   fi
 }
 
-# ---------- start clients using NAMED coproc (no warnings) ----------
+# ---------- start clients using NAMED coproc (silence 'still exists') ----------
 start_A() {
   A_LOG="$TMPDIR/A.log"; : >"$A_LOG"
+  # If a previous APROC exists in this shell, clean it to avoid warnings
+  if [[ -n "${APROC_PID:-}" ]]; then
+    kill "$APROC_PID" 2>/dev/null || true
+    wait "$APROC_PID" 2>/dev/null || true
+    unset -v APROC APROC_PID
+  fi
   coproc APROC { nc "$HOST" "$PORT"; }
   exec {A_RFD}<&${APROC[0]}
   exec {A_WFD}>&${APROC[1]}
+  # capture PID for cleanup
   APROC_PID=$APROC_PID
   cat <&${A_RFD} >>"$A_LOG" & READERA=$!
 }
 start_B() {
   B_LOG="$TMPDIR/B.log"; : >"$B_LOG"
+  if [[ -n "${BPROC_PID:-}" ]]; then
+    kill "$BPROC_PID" 2>/dev/null || true
+    wait "$BPROC_PID" 2>/dev/null || true
+    unset -v BPROC BPROC_PID
+  fi
   coproc BPROC { nc "$HOST" "$PORT"; }
   exec {B_RFD}<&${BPROC[0]}
   exec {B_WFD}>&${BPROC[1]}
@@ -167,6 +179,11 @@ start_B() {
 }
 start_C() {
   C_LOG="$TMPDIR/C.log"; : >"$C_LOG"
+  if [[ -n "${CPROC_PID:-}" ]]; then
+    kill "$CPROC_PID" 2>/dev/null || true
+    wait "$CPROC_PID" 2>/dev/null || true
+    unset -v CPROC CPROC_PID
+  fi
   coproc CPROC { nc "$HOST" "$PORT"; }
   exec {C_RFD}<&${CPROC[0]}
   exec {C_WFD}>&${CPROC[1]}
@@ -215,6 +232,7 @@ expect "C" "$C_LOG" "NOTICE \* :Welcome to ft_irc" 8
 section_end
 
 section_begin "1) AUTH order enforced"
+# NOTE: This will FAIL until you add checks in cmdNICK/cmdUSER (PASS -> NICK -> USER).
 sendA "NICK Alice";         expect "A" "$A_LOG" " 451 .* NICK :You have not registered \(PASS first\)"
 sendA "USER a 0 \* :Alice"; expect "A" "$A_LOG" " 451 .* USER :You have not registered \(PASS first\)"
 sendA "PASS $PASS";         expect "A" "$A_LOG" "NOTICE \* :Password accepted" 6
@@ -247,12 +265,11 @@ expect "A" "$A_LOG" " 366 Alice #zoo :End of /NAMES list."
 section_end
 
 section_begin "3) PRIVMSG trailing handling (check receiver)"
-# Put Bob into #zoo so he can receive messages from Alice
 sendB "JOIN #zoo"
 expect "B" "$B_LOG" " JOIN #zoo"
 sendA "PRIVMSG #zoo :hello there!"
 expect "B" "$B_LOG" "PRIVMSG #zoo :hello there!"
-# Without ':' your server sends only the first word to receivers (permissive) OR rejects with 412 (strict)
+# Without ':' your server may be permissive (first word) or strict 412
 sendA "PRIVMSG #zoo hello there"
 if sleep_until "$A_LOG" " 412 .* :No text to send" 3; then
   pass "strict 412 for multi-word w/o ':'"
@@ -263,9 +280,13 @@ fi
 section_end
 
 section_begin "4) MODE +o/-o broadcast format (HexChat compatibility)"
-# Make admin an operator first, then let admin use the bot to op/kick others
+# Ensure admin is a member BEFORE op/deop actions
+sendC "JOIN #zoo"
+expect "C" "$C_LOG" " JOIN #zoo"
+# Alice grants +o admin (server broadcast)
 sendA "MODE #zoo +o admin"
 expect "A" "$A_LOG" ":Alice MODE #zoo \+o admin" 6
+# Admin (now in-channel op) uses bot to +o Bob and then kick him
 sendC "PRIVMSG #zoo :!op Bob"
 expect "A" "$A_LOG" ":admin MODE #zoo \+o Bob" 6
 expect "B" "$B_LOG" ":admin MODE #zoo \+o Bob" 6
@@ -285,7 +306,7 @@ fi
 section_end
 
 section_begin "6) Auto-promote an op if none left (optional)"
-# If you implement auto-reop, broadcast should appear; otherwise warn.
+# remove ops for all present; server may auto-reop one member
 sendC "MODE #zoo -o admin"
 sendA "MODE #zoo -o Alice"
 sendB "MODE #zoo -o Bob"
@@ -311,10 +332,9 @@ section_end
 section_begin "8) Channel is deleted when empty"
 sendA "JOIN #gone";                   expect "A" "$A_LOG" " JOIN #gone"
 sendB "PRIVMSG #gone :hey";          expect "B" "$B_LOG" " 442 .* #gone :You're not on that channel"
-sendA "PART #gone";                   # sender won't receive PART echo; that's normal
-# After A leaves, either:
-#  - channel deleted => Bob PRIVMSG returns 403 (preferred), or
-#  - channel kept empty => Bob PRIVMSG returns 442 (not preferred)
+sendA "PART #gone"
+# Now actually test deletion by sending a NEW message
+sendB "PRIVMSG #gone :again"
 if sleep_until "$B_LOG" " 403 .* #gone :No such channel" 3; then
   pass "channel deleted when empty (403)"
 else
@@ -327,7 +347,9 @@ fi
 section_end
 
 section_begin "9) Bot commands"
-sendA "PRIVMSG #zoo :!help";            expect "A" "$A_LOG" "PRIVMSG #zoo :!ping \| !echo <text> \| !topic <text> \| !op <nick> \| !kick <nick> \[reason\]"
+sendA "PRIVMSG #zoo :!help"
+# match the new, longer help line
+expect "A" "$A_LOG" "PRIVMSG #zoo :!help \[cmd\] \| !about \| !ping \| !echo <text> \| !who \| !modes \| !roll \[XdY\] \| !8ball <q> \| !topic <text> \| !op <nick> \| !deop <nick> \| !kick <nick> \[reason\]"
 sendA "PRIVMSG #zoo :!ping";            expect "A" "$A_LOG" "PRIVMSG #zoo :pong"
 sendA "PRIVMSG #zoo :!echo hello-bot";  expect "A" "$A_LOG" "PRIVMSG #zoo :hello-bot"
 sendC "PRIVMSG #zoo :!topic test topic set via bot"
