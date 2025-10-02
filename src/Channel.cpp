@@ -15,6 +15,7 @@ const std::set<int>& Channel::members() const { return _members; }
 bool Channel::isOp(const std::string& nick) const { return _operators.find(nick) != _operators.end(); }
 void Channel::addOp(const std::string& nick) { _operators.insert(nick); }
 void Channel::removeOp(const std::string& nick) { _operators.erase(nick); }
+bool Channel::hasAnyOp() const { return !_operators.empty(); }
 
 void Channel::invite(const std::string& nick) { _invited.insert(nick); }
 bool Channel::isInvited(const std::string& nick) const { return _invited.find(nick) != _invited.end(); }
@@ -38,3 +39,6 @@ void Channel::clearKey() { _key.clear(); }
 int Channel::userLimit() const { return _userLimit; }
 void Channel::setUserLimit(int lim) { _userLimit = lim; }
 bool Channel::isFull() const { return _userLimit != -1 && (int)_members.size() >= _userLimit; }
+
+bool Channel::empty() const { return _members.empty(); }
+size_t Channel::memberCount() const { return _members.size(); }

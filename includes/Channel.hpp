@@ -6,25 +6,29 @@
 
 class Channel {
 public:
-    Channel(const std::string& name);
+    explicit Channel(const std::string& name);
 
     const std::string& name() const;
     const std::string& topic() const;
-    void               setTopic(const std::string& t);
+    void setTopic(const std::string& t);
 
     bool hasMemberFd(int fd) const;
     void addMember(int fd);
     void removeMember(int fd);
     const std::set<int>& members() const;
 
+    // Operators
     bool isOp(const std::string& nick) const;
     void addOp(const std::string& nick);
     void removeOp(const std::string& nick);
+    bool hasAnyOp() const;            // NEW
 
+    // Invites
     void invite(const std::string& nick);
     bool isInvited(const std::string& nick) const;
     bool consumeInvite(const std::string& nick);
 
+    // Modes
     bool inviteOnly() const;
     void setInviteOnly(bool b);
 
@@ -39,17 +43,18 @@ public:
     void setUserLimit(int lim);
     bool isFull() const;
 
-    // NEW helpers
-    bool empty() const { return _members.empty(); }
-    bool hasAnyOp() const { return !_operators.empty(); }
+    // Convenience
+    bool   empty() const;             // NEW
+    size_t memberCount() const;       // NEW
 
 private:
     std::string _name;
     std::string _topic;
 
-    std::set<int>          _members;
-    std::set<std::string>  _operators;
-    std::set<std::string>  _invited;
+    std::set<int>         _members;
+    std::set<std::string> _operators;
+
+    std::set<std::string> _invited;
 
     bool        _inviteOnly;
     bool        _topicRestricted;

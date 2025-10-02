@@ -16,18 +16,12 @@
 #include <netdb.h>
 #include <fcntl.h>
 #include <unistd.h>
-#include <poll.h>  // ensure pollfd / poll
 
 Server::Server(const std::string& port, const std::string& password)
-: _bot(0), _ft(0)
+: _listen_fd(-1), _password(password), _servername("ircserv"),
+  _bot(0), _ft(0)
 {
-    _listen_fd = -1;
-    _password = password;
-    _servername = "ircserv";
-
     setupSocket(port);
-
-    // subsystems
     _bot = new Bot(*this, "helperbot");
     _ft  = new FileTransfer(*this);
 }
@@ -35,30 +29,20 @@ Server::Server(const std::string& port, const std::string& password)
 Server::~Server() {
     closeAndCleanup();
     delete _bot; _bot = 0;
-    delete _ft;  _ft = 0;
+    delete _ft;  _ft  = 0;
 }
 
 const std::string& Server::serverName() const { return _servername; }
 
 void Server::setupSocket(const std::string& port) {
-    struct addrinfo hints;
-
-    // zero w/o memset (42 style)
-    {
-        unsigned char* p = reinterpret_cast<unsigned char*>(&hints);
-        for (size_t i = 0; i < sizeof(hints); ++i) p[i] = 0;
-    }
-
+    struct addrinfo hints; std::memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_STREAM;
     hints.ai_flags = AI_PASSIVE;
 
     struct addrinfo* res = 0;
     int err = getaddrinfo(NULL, port.c_str(), &hints, &res);
-    if (err != 0) {
-        std::cerr << "getaddrinfo failed\n";
-        std::exit(1);
-    }
+    if (err != 0) { std::cerr << "getaddrinfo: " << gai_strerror(err) << std::endl; std::exit(1); }
 
     int fd = -1;
     for (struct addrinfo* p = res; p; p = p->ai_next) {
@@ -69,20 +53,13 @@ void Server::setupSocket(const std::string& port) {
         setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));
 
         if (bind(fd, p->ai_addr, p->ai_addrlen) == 0) {
-            if (listen(fd, 128) == 0) {
-                _listen_fd = fd;
-                break;
-            }
+            if (listen(fd, 128) == 0) { _listen_fd = fd; break; }
         }
         close(fd); fd = -1;
     }
     freeaddrinfo(res);
 
-    if (_listen_fd < 0) {
-        std::cerr << "Failed to bind/listen\n";
-        std::exit(1);
-    }
-
+    if (_listen_fd < 0) { std::cerr << "Failed to bind/listen" << std::endl; std::exit(1); }
     fcntl(_listen_fd, F_SETFL, O_NONBLOCK);
     addPollfd(_listen_fd, POLLIN);
 }
@@ -93,10 +70,7 @@ void Server::addPollfd(int fd, short events) {
 }
 
 void Server::setPollEvents(int fd, short events) {
-    for (size_t i = 0; i < _pfds.size(); ++i) if (_pfds[i].fd == fd) {
-        _pfds[i].events = events;
-        return;
-    }
+    for (size_t i = 0; i < _pfds.size(); ++i) if (_pfds[i].fd == fd) { _pfds[i].events = events; return; }
 }
 
 void Server::run() {
@@ -104,9 +78,8 @@ void Server::run() {
     while (true) {
         int ret = poll(&_pfds[0], _pfds.size(), -1);
         if (ret < 0) {
-            // keep it simple; don't drive logic via errno
-            std::cerr << "poll failed\n";
-            break;
+            if (errno == EINTR) continue;
+            std::perror("poll"); break;
         }
         for (size_t i = 0; i < _pfds.size(); ++i) {
             int fd = _pfds[i].fd;
@@ -121,11 +94,8 @@ void Server::run() {
                 if (re & (POLLHUP | POLLERR | POLLNVAL)) removeClient(fd);
             }
         }
-        // compact pollfd vector (remove closed fds)
         std::vector<struct pollfd> newpfds;
-        for (size_t i = 0; i < _pfds.size(); ++i) {
-            if (_pfds[i].fd != -1) newpfds.push_back(_pfds[i]);
-        }
+        for (size_t i = 0; i < _pfds.size(); ++i) if (_pfds[i].fd != -1) newpfds.push_back(_pfds[i]);
         _pfds.swap(newpfds);
     }
 }
@@ -145,11 +115,7 @@ void Server::sendToClient(int fd, const std::string& msg) {
     if (it == _clients.end()) return;
     Client* c = it->second;
     c->outbuf().append(msg);
-
-    for (size_t i = 0; i < _pfds.size(); ++i) if (_pfds[i].fd == fd) {
-        _pfds[i].events = POLLIN | POLLOUT;
-        break;
-    }
+    for (size_t i = 0; i < _pfds.size(); ++i) if (_pfds[i].fd == fd) { _pfds[i].events = POLLIN | POLLOUT; break; }
 }
 
 void Server::handleClientWrite(int fd) {
@@ -157,28 +123,17 @@ void Server::handleClientWrite(int fd) {
     if (it == _clients.end()) return;
     Client* c = it->second;
     std::string& ob = c->outbuf();
-    if (ob.empty()) {
-        setPollEvents(fd, POLLIN);
-        return;
-    }
+    if (ob.empty()) { setPollEvents(fd, POLLIN); return; }
     ssize_t n = ::send(fd, ob.data(), ob.size(), 0);
-    if (n > 0) {
-        ob.erase(0, n);
-    }
-    if (n < 0 && (errno != EWOULDBLOCK && errno != EAGAIN)) {
-        removeClient(fd);
-        return;
-    }
+    if (n > 0) ob.erase(0, n);
+    if (n < 0 && (errno != EWOULDBLOCK && errno != EAGAIN)) { removeClient(fd); return; }
     if (ob.empty()) setPollEvents(fd, POLLIN);
 }
 
 void Server::handleClientRead(int fd) {
     char buf[4096];
     ssize_t n = recv(fd, buf, sizeof(buf), 0);
-    if (n <= 0) {
-        removeClient(fd);
-        return;
-    }
+    if (n <= 0) { removeClient(fd); return; }
     std::map<int, Client*>::iterator it = _clients.find(fd);
     if (it == _clients.end()) return;
     Client* c = it->second;
@@ -199,7 +154,7 @@ Channel* Server::getOrCreateChannel(const std::string& name) {
     if (it != _channels.end()) return it->second;
     Channel* ch = new Channel(name);
     _channels[key] = ch;
-    if (_bot) _bot->onChannelCreated(name);
+    // IMPORTANT: do NOT greet here; greet when first user joins (so it’s visible)
     return ch;
 }
 
@@ -211,9 +166,8 @@ Channel* Server::findChannel(const std::string& name) {
 }
 
 Client* Server::findClientByNick(const std::string& nick) {
-    for (std::map<int, Client*>::iterator it = _clients.begin(); it != _clients.end(); ++it) {
+    for (std::map<int, Client*>::iterator it = _clients.begin(); it != _clients.end(); ++it)
         if (toLower(it->second->nick()) == toLower(nick)) return it->second;
-    }
     return 0;
 }
 
@@ -237,25 +191,48 @@ void Server::broadcast(const std::string& chan, const std::string& msg, int exce
     }
 }
 
+// Auto-promote someone if no ops remain (announce as server)
+void Server::ensureOpIfNone(Channel* ch) {
+    if (!ch || ch->hasAnyOp() || ch->empty()) return;
+    int fd = *ch->members().begin();
+    std::map<int, Client*>::iterator it = _clients.find(fd);
+    if (it == _clients.end() || !it->second) return;
+    const std::string nick = it->second->nick();
+    ch->addOp(nick);
+    const std::string& chan = ch->name();
+    broadcast(chan, ":" + _servername + " MODE " + chan + " +o " + nick + "\r\n", -1);
+}
+
+// Delete channel if empty
+void Server::maybeDeleteChannelIfEmpty(Channel* ch) {
+    if (!ch || !ch->empty()) return;
+    std::string key = toLower(ch->name());
+    std::map<std::string, Channel*>::iterator it = _channels.find(key);
+    if (it != _channels.end()) {
+        delete it->second;
+        _channels.erase(it);
+    }
+}
+
 void Server::removeClient(int fd) {
     std::map<int, Client*>::iterator it = _clients.find(fd);
     if (it == _clients.end()) return;
     Client* c = it->second;
 
-    for (std::set<std::string>::const_iterator sit = c->channels().begin(); sit != c->channels().end(); ++sit) {
-        Channel* ch = findChannel(*sit);
-        if (ch) {
-            ch->removeMember(fd);
-            ch->removeOp(c->nick()); // drop op on disconnect
-            broadcast(*sit, ":" + c->nick() + " QUIT :Client disconnected\r\n", fd);
-            promoteOpIfNone(*ch);
-            maybeDeleteChannel(*sit);
-        }
+    // copy channel names (lowercase keys) to avoid iterator invalidation
+    std::vector<std::string> chkeys(c->channels().begin(), c->channels().end());
+    for (size_t i = 0; i < chkeys.size(); ++i) {
+        Channel* ch = findChannel(chkeys[i]);
+        if (!ch) continue;
+        broadcast(ch->name(), ":" + c->nick() + " QUIT :Client disconnected\r\n", fd);
+        ch->removeMember(fd);
+        ch->removeOp(c->nick());
+        ensureOpIfNone(ch);
+        maybeDeleteChannelIfEmpty(ch);
     }
 
     close(fd);
     for (size_t i = 0; i < _pfds.size(); ++i) if (_pfds[i].fd == fd) _pfds[i].fd = -1;
-
     delete c;
     _clients.erase(it);
 }
@@ -267,28 +244,7 @@ void Server::closeAndCleanup() {
         delete it->second;
     }
     _clients.clear();
-    for (std::map<std::string, Channel*>::iterator ct = _channels.begin(); ct != _channels.end(); ++ct) {
+    for (std::map<std::string, Channel*>::iterator ct = _channels.begin(); ct != _channels.end(); ++ct)
         delete ct->second;
-    }
     _channels.clear();
-}
-
-void Server::maybeDeleteChannel(const std::string& name) {
-    Channel* ch = findChannel(name);
-    if (ch && ch->empty()) {
-        std::string key = toLower(name);
-        std::map<std::string,Channel*>::iterator it = _channels.find(key);
-        if (it != _channels.end()) { delete it->second; _channels.erase(it); }
-    }
-}
-
-void Server::promoteOpIfNone(Channel& ch) {
-    if (ch.hasAnyOp()) return;
-    const std::set<int>& mem = ch.members();
-    if (mem.empty()) return;
-    int fd = *mem.begin();
-    Client* who = _clients.count(fd) ? _clients[fd] : 0;
-    if (!who) return;
-    ch.addOp(who->nick());
-    broadcast(ch.name(), ":" + serverName() + " MODE " + ch.name() + " +o " + who->nick() + "\r\n", -1);
 }
