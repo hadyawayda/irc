@@ -157,7 +157,8 @@ void Bot::doRoll(const std::string& where, const std::string& arg) {
         for (size_t i=0;i<arg.size();++i) if (arg[i]=='d' || arg[i]=='D'){ dpos=(int)i; break; }
         if (dpos == -1) Y = std::atoi(arg.c_str());
         else { X = std::atoi(arg.substr(0,dpos).c_str()); Y = std::atoi(arg.substr(dpos+1).c_str()); }
-        if (X <= 0) X = 1; if (Y <= 1) Y = 6;
+        if (X <= 0) X = 1;
+        if (Y <= 1) Y = 6;
     }
     long sum = 0; std::ostringstream out; out << "roll " << X << "d" << Y << ":";
     for (int i=0;i<X && i<20; ++i) { int r = (rng() % Y) + 1; sum += r; out << " " << r; }
