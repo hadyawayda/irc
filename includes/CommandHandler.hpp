@@ -21,7 +21,7 @@ private:
     void cmdPONG(Client&, const std::vector<std::string>&);
     void cmdPRIVMSG(Client&, const std::vector<std::string>&, const std::string& trailing);
     void cmdJOIN(Client&, const std::vector<std::string>&);
-    void cmdPART(Client&, const std::vector<std::string>&);
+    void cmdPART(Client&, const std::vector<std::string>&, const std::string& trailing);
     void cmdQUIT(Client&, const std::vector<std::string>&, const std::string& trailing);
     void cmdTOPIC(Client&, const std::vector<std::string>&, const std::string& trailing);
     void cmdMODE(Client&, const std::vector<std::string>&);

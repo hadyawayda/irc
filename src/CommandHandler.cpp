@@ -28,7 +28,7 @@ void CommandHandler::handleLine(Client& c, const std::string& line) {
     else if (ucmd == "pong") cmdPONG(c, params);
     else if (ucmd == "privmsg") cmdPRIVMSG(c, params, trailing);
     else if (ucmd == "join") cmdJOIN(c, params);
-    else if (ucmd == "part") cmdPART(c, params);
+    else if (ucmd == "part") cmdPART(c, params, trailing);
     else if (ucmd == "quit") cmdQUIT(c, params, trailing);
     else if (ucmd == "topic") cmdTOPIC(c, params, trailing);
     else if (ucmd == "mode") cmdMODE(c, params);
@@ -176,22 +176,37 @@ void CommandHandler::cmdJOIN(Client& c, const std::vector<std::string>& p) {
     }
 }
 
-void CommandHandler::cmdPART(Client& c, const std::vector<std::string>& p) {
-    if (!requireRegistered(c, "JOIN")) return;
+void CommandHandler::cmdPART(Client& c, const std::vector<std::string>& p, const std::string& trailing) {
+    if (!requireRegistered(c, "PART")) return;
 
     if (p.empty()) { sendNumeric(c, "461", "PART :Not enough parameters"); return; }
     std::string chan = p[0];
     Channel* ch = _srv.findChannel(chan);
-    if (!ch || !ch->hasMemberFd(c.fd())) { sendNumeric(c, "442", chan + " :You're not on that channel"); return; }
+    if (!ch || !ch->hasMemberFd(c.fd())) { 
+        sendNumeric(c, "442", chan + " :You're not on that channel"); 
+        return; 
+    }
 
+    // Build a full user prefix: nick!~user@host
+    // (we use serverName() as the host; you could use "localhost" if you prefer)
+    std::string host = _srv.serverName().empty() ? "localhost" : _srv.serverName();
+    std::string part = ":" + c.nick() + "!~" + c.user() + "@" + host + " PART " + chan;
+    if (!trailing.empty()) part += " :" + trailing;
+    part += "\r\n";
+
+    // Send the PART to everyone *before* removing membership, so the leaver also sees it
+    _srv.broadcast(chan, part, -1);
+
+    // Now update state
     ch->removeMember(c.fd());
     ch->removeOp(c.nick());
     c.leaveChannel(toLower(chan));
-    std::string part = ":" + c.nick() + " PART " + chan + "\r\n";
-    _srv.broadcast(chan, part, -1);
-    _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :You left " + chan + ".\r\n");
 
+    // Housekeeping: auto-reop / delete empty channel if you implemented those
     _srv.onMemberLeftChannel(ch, toLower(chan), c.nick());
+
+    // Optional: local user feedback (not required by spec)
+    // _srv.sendToClient(c.fd(), ":ircserv NOTICE " + c.nick() + " :You left " + chan + ".\r\n");
 }
 
 void CommandHandler::cmdQUIT(Client& c, const std::vector<std::string>&, const std::string& trailing) {
