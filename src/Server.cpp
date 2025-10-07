@@ -9,8 +9,6 @@
 #include <iostream>
 #include <cstring>
 #include <cstdlib>
-#include <cerrno>
-#include <cstdio>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netdb.h>
@@ -96,8 +94,7 @@ void Server::run() {
     while (true) {
         int ret = poll(&_pfds[0], _pfds.size(), -1);
         if (ret < 0) {
-            if (errno == EINTR) continue;
-            std::perror("poll"); break;
+            continue;
         }
         for (size_t i = 0; i < _pfds.size(); ++i) {
             int fd = _pfds[i].fd;
@@ -152,7 +149,7 @@ void Server::handleClientWrite(int fd) {
     }
     ssize_t n = ::send(fd, ob.data(), ob.size(), 0);
     if (n > 0) ob.erase(0, n);
-    if (n < 0 && (errno != EWOULDBLOCK && errno != EAGAIN)) {
+    if (n < 0) {
         removeClient(fd);
         return;
     }
@@ -221,14 +218,15 @@ void Server::broadcast(const std::string& chan, const std::string& msg, int exce
     }
 }
 
-// ---- new: when a member leaves a channel (PART/QUIT/KICK) ----
+// ---- when a member leaves a channel (PART/QUIT/KICK) ----
 void Server::onMemberLeftChannel(Channel* ch, const std::string& lower_key, const std::string& nickJustLeft) {
+    (void)lower_key;
     (void)nickJustLeft;
     if (!ch) return;
     // If no operators remain, auto-promote first member
     autoReopIfNone(ch);
     // If empty, delete channel
-    maybeDeleteChannel(lower_key);
+    maybeDeleteChannel(toLower(ch->name()));
 }
 
 void Server::maybeDeleteChannel(const std::string& lower_key) {
@@ -243,20 +241,16 @@ void Server::maybeDeleteChannel(const std::string& lower_key) {
 
 void Server::autoReopIfNone(Channel* ch) {
     if (!ch) return;
-    // If there are no members or there is already at least one op, nothing to do
     if (ch->members().empty()) return;
-    // We need to peek into operators; expose via a Channel method
-    // Implemented in Channel::hasAnyOp()
     if (ch->hasAnyOp()) return;
 
-    // Promote the first member we can find
+    // Promote the first member we can find (by fd order)
     const std::set<int>& mem = ch->members();
     for (std::set<int>::const_iterator it = mem.begin(); it != mem.end(); ++it) {
         std::map<int, Client*>::iterator cit = _clients.find(*it);
         if (cit == _clients.end() || !cit->second) continue;
         Client* m = cit->second;
         ch->addOp(m->nick());
-        // Broadcast from server name so tests can match ":ircserv MODE ..."
         std::string line = ":" + _servername + " MODE " + ch->name() + " +o " + m->nick() + "\r\n";
         broadcast(ch->name(), line, -1);
         break;
