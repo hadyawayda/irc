@@ -12,7 +12,7 @@ struct Transfer {
     int           sender_fd;
     int           receiver_fd;
     std::string   filename;     // original, as provided by sender
-    std::string   saved_path;   // server-side path where bytes are stored (uploads/<tid>_<safe>)
+    std::string   saved_path;   // server-side path where bytes are stored ("File Transfers"/<tid>_<safe>)
     unsigned long size_total;   // declared size (may be 0 or mismatch)
     unsigned long size_seen;    // actually streamed bytes
     bool          accepted;
@@ -50,7 +50,7 @@ public:
 private:
     // server-side helpers (no errno strings)
     static std::string sanitizeFilename(const std::string& name);
-    static void ensureUploadsDir();                 // creates ./uploads if missing (best-effort)
+    static void ensureUploadsDir();                 // creates ./"File Transfers" if missing (best-effort)
     static bool appendToFile(const std::string& path, const std::string& bytes);
     static bool touchFile(const std::string& path); // create/truncate
 

@@ -128,11 +128,16 @@ std::string FileTransfer::sanitizeFilename(const std::string& name) {
 void FileTransfer::ensureUploadsDir() {
     // Best-effort mkdir; ignore return value (no errno usage)
     struct stat st;
-    if (stat("uploads", &st) == 0) return;
 #ifdef _WIN32
-    _mkdir("uploads");
+    const char* dirName = "File Transfers";
 #else
-    mkdir("uploads", 0755);
+    const char* dirName = "File Transfers";
+#endif
+    if (stat(dirName, &st) == 0) return;
+#ifdef _WIN32
+    _mkdir(dirName);
+#else
+    mkdir(dirName, 0755);
 #endif
 }
 
@@ -170,7 +175,7 @@ int FileTransfer::createOffer(int sender_fd, int receiver_fd, const std::string&
     // prepare server-side destination path now so we can stream to disk
     const std::string safe = sanitizeFilename(filename);
     char idbuf[32]; std::sprintf(idbuf, "%d", t.id);
-    t.saved_path = std::string("uploads/") + idbuf + "_" + safe;
+    t.saved_path = std::string("File Transfers/") + idbuf + "_" + safe;
 
     (void)touchFile(t.saved_path); // best effort
 
@@ -186,7 +191,7 @@ bool FileTransfer::accept(int tid, int receiver_fd) {
 
     t.accepted = true;
 
-    // ----- Auto-stream from project root to receiver as 740 base64, and copy to uploads -----
+    // ----- Auto-stream from project root to receiver as 740 base64, and copy to "File Transfers" -----
     // Open source file (relative to server CWD)
     std::string safeSrc = sanitizeFilename(t.filename);
     std::FILE* src = std::fopen(safeSrc.c_str(), "rb");

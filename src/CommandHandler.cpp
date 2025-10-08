@@ -401,6 +401,11 @@ void CommandHandler::cmdFILESEND(Client& c, const std::vector<std::string>& p, c
     unsigned long sizeTotal = std::strtoul(p[1].c_str(), 0, 10);
     Client* dst = _srv.findClientByNick(targetNick);
     if (!dst) { sendNumeric(c, "401", targetNick + " :No such nick"); return; }
+    // Prevent sending a file to yourself
+    if (dst->fd() == c.fd() || targetNick == c.nick()) {
+        sendNumeric(c, "482", targetNick + " :You may not filesend to yourself");
+        return;
+    }
     int tid = _srv._ft->createOffer(c.fd(), dst->fd(), trailing, sizeTotal);
     std::ostringstream tidStream; tidStream << tid;
     std::string tidStr = tidStream.str();
