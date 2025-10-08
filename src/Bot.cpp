@@ -54,7 +54,9 @@ void Bot::checkReminders() {
         const Reminder& r = _reminders[i];
         if (r.due <= now) {
             say(r.where, r.who + ": ⏰ reminder — " + r.text);
-        } else keep.push_back(r);
+        } else {
+            keep.push_back(r);
+        }
     }
     _reminders.swap(keep);
 }
@@ -392,20 +394,36 @@ void Bot::doCalc(const std::string& where, const std::string& arg) {
         else if (c=='*'||c=='/'){ prec=2; oc=c; }
         else if (c=='('){ op.push_back(c); ++i; continue; }
         else if (c==')'){
-            while(!op.empty() && op.back()!='('){ out.push_back(std::string(1,op.back())); op.pop_back(); }
-            if (!op.empty() && op.back()=='(') op.pop_back(); ++i; continue;
+            while(!op.empty() && op.back()!='('){
+                out.push_back(std::string(1,op.back()));
+                op.pop_back();
+            }
+            if (!op.empty() && op.back()=='(') {
+                op.pop_back();
+            }
+            ++i;
+            continue;
         } else { say(where, "Invalid char in expr."); return; }
 
         while(!op.empty()){
             char t=op.back();
             int tp = (t=='+'||t=='-')?1: (t=='*'||t=='/')?2: 0;
             if (t=='(') break;
-            if ((rightAssoc && prec<tp) || (!rightAssoc && prec<=tp)) { out.push_back(std::string(1,t)); op.pop_back(); }
-            else break;
+            if ((rightAssoc && prec<tp) || (!rightAssoc && prec<=tp)) {
+                out.push_back(std::string(1,t));
+                op.pop_back();
+            } else break;
         }
         op.push_back(oc); ++i;
     }
-    while(!op.empty()){ if(op.back()=='('){ say(where, "Mismatched '('"); return;} out.push_back(std::string(1,op.back())); op.pop_back(); }
+    while(!op.empty()){
+        if(op.back()=='('){
+            say(where, "Mismatched '('");
+            return;
+        }
+        out.push_back(std::string(1,op.back()));
+        op.pop_back();
+    }
 
     // eval RPN
     std::vector<long> st;
