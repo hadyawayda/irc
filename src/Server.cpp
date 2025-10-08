@@ -90,7 +90,6 @@ void Server::setPollEvents(int fd, short events) {
 }
 
 void Server::run() {
-    CommandHandler dispatcher(*this);
     while (true) {
         int ret = poll(&_pfds[0], _pfds.size(), -1);
         if (ret < 0) {
