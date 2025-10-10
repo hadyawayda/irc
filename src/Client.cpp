@@ -1,6 +1,8 @@
 #include "Client.hpp"
 #include "Server.hpp"
 
+// Construct a client wrapper for an accepted TCP connection. Initially the
+// client is not registered (must PASS, NICK, and USER).
 Client::Client(int fd)
 : _fd(fd), _registered(false), _pass_ok(false) {}
 
@@ -23,6 +25,8 @@ const std::set<std::string>& Client::channels() const { return _channels; }
 void Client::joinChannel(const std::string& name) { _channels.insert(name); }
 void Client::leaveChannel(const std::string& name) { _channels.erase(name); }
 
+// Attempt to complete registration and send welcome numerics if PASS, NICK,
+// and USER were all provided. This is called after any relevant update.
 void Client::tryRegister(Server& s) {
     if (!_registered && _pass_ok && !_nick.empty() && !_user.empty()) {
         _registered = true;
